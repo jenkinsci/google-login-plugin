@@ -101,6 +101,10 @@ public class GoogleUserInfo extends UserProperty {
         if (name != null)
             u.setFullName(name);
 
+        GoogleUserInfo existingProperty = u.getProperty(GoogleUserInfo.class);
+        if (existingProperty != null) {
+            revokeAccessTokenOnLogout = existingProperty.revokeAccessTokenOnLogout;
+        }
         u.addProperty(this);
     }
 
