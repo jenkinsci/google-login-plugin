@@ -9,4 +9,7 @@
   <f:entry title="${%Google Apps Domain}" field="domain">
     <f:textbox/>
   </f:entry>
+  <f:entry field="revokeAccessTokenOnLogout">
+    <f:checkbox title="${%Revoke access token on logout}"/>
+  </f:entry>
 </j:jelly>

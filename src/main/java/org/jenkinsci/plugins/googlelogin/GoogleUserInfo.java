@@ -25,10 +25,14 @@ package org.jenkinsci.plugins.googlelogin;
 
 import com.google.api.client.util.Key;
 import hudson.Extension;
+import hudson.model.Descriptor;
 import hudson.model.User;
 import hudson.model.UserProperty;
 import hudson.model.UserPropertyDescriptor;
 import hudson.tasks.Mailer;
+import hudson.util.Secret;
+import net.sf.json.JSONObject;
+import org.kohsuke.stapler.StaplerRequest;
 
 import java.io.IOException;
 
@@ -38,7 +42,6 @@ import java.io.IOException;
  * This is from https://www.googleapis.com/userinfo/v2/me
  */
 public class GoogleUserInfo extends UserProperty {
-
     @Key
     public String family_name;
 
@@ -69,6 +72,8 @@ public class GoogleUserInfo extends UserProperty {
     @Key
     public boolean verified_email;
 
+    private boolean revokeAccessTokenOnLogout;
+
     public String getEmail() {
         return email;
     }
@@ -77,10 +82,18 @@ public class GoogleUserInfo extends UserProperty {
         return name;
     }
 
+    public boolean isRevokeAccessTokenOnLogout() {
+        return revokeAccessTokenOnLogout;
+    }
+
+    public void setRevokeAccessTokenOnLogout(boolean revokeAccessTokenOnLogout) {
+        this.revokeAccessTokenOnLogout = revokeAccessTokenOnLogout;
+    }
+
     /**
      * Updates the user information on Hudson based on the information in this identity.
      */
-    public void updateProfile(hudson.model.User u) throws IOException {
+    public void updateProfile(User u) throws IOException {
         // update the user profile by the externally given information
         if (email != null)
             u.addProperty(new Mailer.UserProperty(email));
@@ -89,6 +102,12 @@ public class GoogleUserInfo extends UserProperty {
             u.setFullName(name);
 
         u.addProperty(this);
+    }
+
+    @Override
+    public UserProperty reconfigure(StaplerRequest req, JSONObject form) throws Descriptor.FormException {
+        this.revokeAccessTokenOnLogout = form.optBoolean("revokeAccessTokenOnLogout");
+        return this;
     }
 
     @Extension
@@ -101,7 +120,7 @@ public class GoogleUserInfo extends UserProperty {
 
         @Override
         public String getDisplayName() {
-            return null;
+            return "Google Login";
         }
     }
 }
