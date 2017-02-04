@@ -56,12 +56,16 @@ import org.acegisecurity.context.SecurityContextHolder;
 import org.acegisecurity.providers.UsernamePasswordAuthenticationToken;
 import org.acegisecurity.providers.anonymous.AnonymousAuthenticationToken;
 import org.kohsuke.stapler.DataBoundConstructor;
+import org.kohsuke.stapler.DataBoundSetter;
 import org.kohsuke.stapler.Header;
 import org.kohsuke.stapler.HttpRedirect;
 import org.kohsuke.stapler.HttpResponse;
 import org.kohsuke.stapler.QueryParameter;
 import org.kohsuke.stapler.StaplerRequest;
+import org.kohsuke.stapler.StaplerResponse;
 
+import org.apache.commons.lang.StringUtils;
+import javax.servlet.ServletException;
 import java.io.IOException;
 import java.util.Arrays;
 import java.util.StringTokenizer;
@@ -84,6 +88,7 @@ public class GoogleOAuth2SecurityRealm extends SecurityRealm {
 
     private static final GenericUrl TOKEN_SERVER_URL = new GenericUrl("https://accounts.google.com/o/oauth2/token");
     private static final String AUTHORIZATION_SERVER_URL = "https://accounts.google.com/o/oauth2/auth";
+    private static final String REVOKE_URL = "https://accounts.google.com/o/oauth2/revoke?token=%s";
 
     private static final HttpTransport HTTP_TRANSPORT = new NetHttpTransport();
 
@@ -101,11 +106,22 @@ public class GoogleOAuth2SecurityRealm extends SecurityRealm {
      */
     private final String domain;
 
+    private boolean revokeAccessTokenOnLogout;
+
     @DataBoundConstructor
     public GoogleOAuth2SecurityRealm(String clientId, String clientSecret, String domain) throws IOException {
         this.clientId = clientId;
         this.clientSecret = Secret.fromString(clientSecret);
         this.domain = Util.fixEmptyAndTrim(domain);
+    }
+
+    @DataBoundSetter
+    public void setRevokeAccessTokenOnLogout(boolean revokeAccessTokenOnLogout) {
+        this.revokeAccessTokenOnLogout = revokeAccessTokenOnLogout;
+    }
+
+    public boolean isRevokeAccessTokenOnLogout() {
+        return revokeAccessTokenOnLogout;
     }
 
     public String getClientId() {
@@ -200,7 +216,7 @@ public class GoogleOAuth2SecurityRealm extends SecurityRealm {
                     GrantedAuthority[] authorities = new GrantedAuthority[]{SecurityRealm.AUTHENTICATED_AUTHORITY};
                     // logs this user in.
                     UsernamePasswordAuthenticationToken token =
-                            new UsernamePasswordAuthenticationToken(info.getEmail(), "", authorities);
+                            new UsernamePasswordAuthenticationToken(info.getEmail(), credential.getAccessToken(), authorities);
                     SecurityContextHolder.getContext().setAuthentication(token);
                     // update the user profile.
                     User u = User.get(token.getName());
@@ -244,6 +260,27 @@ public class GoogleOAuth2SecurityRealm extends SecurityRealm {
      */
     public HttpResponse doFinishLogin(StaplerRequest request) throws IOException {
         return OAuthSession.getCurrent().doFinishLogin(request);
+    }
+
+    @Override
+    public void doLogout(StaplerRequest req, StaplerResponse rsp) throws IOException, ServletException {
+        User currentUser = User.current();
+        if (currentUser != null) {
+            GoogleUserInfo userInfo = currentUser.getProperty(GoogleUserInfo.class);
+            if (userInfo != null && (revokeAccessTokenOnLogout || userInfo.isRevokeAccessTokenOnLogout())) {
+                HttpRequestFactory requestFactory = HTTP_TRANSPORT.createRequestFactory();
+                Object credentials = SecurityContextHolder.getContext().getAuthentication().getCredentials();
+                if (credentials instanceof String) {
+                    String accessToken = (String) credentials;
+                    if (StringUtils.isNotBlank(accessToken)) {
+                        GenericUrl url = new GenericUrl(String.format(REVOKE_URL, accessToken));
+                        HttpRequest request = requestFactory.buildGetRequest(url);
+                        request.execute();
+                    }
+                }
+            }
+        }
+        super.doLogout(req, rsp);
     }
 
     @Extension
