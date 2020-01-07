@@ -23,12 +23,19 @@
  */
 package org.jenkinsci.plugins.googlelogin;
 
+import com.cloudbees.plugins.credentials.CredentialsMatchers;
+import com.cloudbees.plugins.credentials.CredentialsProvider;
+import com.cloudbees.plugins.credentials.common.StandardCredentials;
+import com.cloudbees.plugins.credentials.common.StandardListBoxModel;
+import com.cloudbees.plugins.credentials.domains.DomainRequirement;
+import com.cloudbees.plugins.credentials.domains.URIRequirementBuilder;
 import com.google.api.client.auth.oauth2.AuthorizationCodeFlow;
 import com.google.api.client.auth.oauth2.BearerToken;
 import com.google.api.client.auth.oauth2.ClientParametersAuthentication;
 import com.google.api.client.auth.oauth2.Credential;
 import com.google.api.client.auth.openidconnect.IdToken;
 import com.google.api.client.auth.openidconnect.IdTokenResponse;
+import com.google.api.client.googleapis.auth.oauth2.GoogleCredential;
 import com.google.api.client.http.GenericUrl;
 import com.google.api.client.http.HttpRequest;
 import com.google.api.client.http.HttpRequestFactory;
@@ -38,25 +45,29 @@ import com.google.api.client.http.javanet.NetHttpTransport;
 import com.google.api.client.json.JsonFactory;
 import com.google.api.client.json.JsonObjectParser;
 import com.google.api.client.json.jackson2.JacksonFactory;
+import com.google.api.services.admin.directory.Directory;
+import com.google.api.services.admin.directory.DirectoryScopes;
+import com.google.api.services.admin.directory.model.Group;
+import com.google.api.services.admin.directory.model.Groups;
 import com.google.common.annotations.VisibleForTesting;
+import com.google.common.collect.Sets;
 import hudson.Extension;
 import hudson.Util;
 import hudson.model.Descriptor;
 import hudson.model.Failure;
 import hudson.model.User;
+import hudson.security.ACL;
 import hudson.security.SecurityRealm;
 import hudson.util.HttpResponses;
+import hudson.util.ListBoxModel;
 import hudson.util.Secret;
 import jenkins.model.Jenkins;
 import jenkins.security.SecurityListener;
-import org.acegisecurity.Authentication;
-import org.acegisecurity.AuthenticationException;
-import org.acegisecurity.AuthenticationManager;
-import org.acegisecurity.BadCredentialsException;
-import org.acegisecurity.GrantedAuthority;
+import org.acegisecurity.*;
 import org.acegisecurity.context.SecurityContextHolder;
 import org.acegisecurity.providers.UsernamePasswordAuthenticationToken;
 import org.acegisecurity.providers.anonymous.AnonymousAuthenticationToken;
+import org.jenkinsci.plugins.plaincredentials.FileCredentials;
 import org.kohsuke.accmod.Restricted;
 import org.kohsuke.accmod.restrictions.DoNotUse;
 import org.kohsuke.stapler.DataBoundConstructor;
@@ -67,10 +78,10 @@ import org.kohsuke.stapler.HttpResponse;
 import org.kohsuke.stapler.QueryParameter;
 import org.kohsuke.stapler.Stapler;
 import org.kohsuke.stapler.StaplerRequest;
+import org.kohsuke.stapler.interceptor.RequirePOST;
 
 import java.io.IOException;
-import java.util.Arrays;
-import java.util.StringTokenizer;
+import java.util.*;
 
 /**
  * Login with Google using OpenID Connect / OAuth 2
@@ -115,11 +126,23 @@ public class GoogleOAuth2SecurityRealm extends SecurityRealm {
      */
     private boolean rootURLFromRequest;
 
+    /**
+     * The Service Account Credentials for accessing the GSuite Admin SDK
+     */
+    private final String gsuiteServiceAccountCredentialsId;
+
+    /**
+     * GSuite user which executes the Google Group list api method of Admin SDK
+     */
+    private final String gsuiteImpersonationAccount;
+
     @DataBoundConstructor
-    public GoogleOAuth2SecurityRealm(String clientId, String clientSecret, String domain) throws IOException {
+    public GoogleOAuth2SecurityRealm(String clientId, String clientSecret, String domain, String gsuiteServiceAccountCredentialsId, String gsuiteImpersonationAccount) throws IOException {
         this.clientId = clientId;
         this.clientSecret = Secret.fromString(clientSecret);
         this.domain = Util.fixEmptyAndTrim(domain);
+        this.gsuiteServiceAccountCredentialsId = gsuiteServiceAccountCredentialsId;
+        this.gsuiteImpersonationAccount = gsuiteImpersonationAccount;
     }
 
     @SuppressWarnings("unused") // jelly
@@ -145,6 +168,16 @@ public class GoogleOAuth2SecurityRealm extends SecurityRealm {
 
     public String getDomain() {
         return domain;
+    }
+
+    @SuppressWarnings("unused") // jelly
+    public String getGsuiteServiceAccountCredentialsId() {
+        return gsuiteServiceAccountCredentialsId;
+    }
+
+    @SuppressWarnings("unused") // jelly
+    public String getGsuiteImpersonationAccount() {
+        return gsuiteImpersonationAccount;
     }
 
     /**
@@ -226,10 +259,14 @@ public class GoogleOAuth2SecurityRealm extends SecurityRealm {
                     HttpRequest request = requestFactory.buildGetRequest(url);
 
                     GoogleUserInfo info = request.execute().parseAs(GoogleUserInfo.class);
-                    GrantedAuthority[] authorities = new GrantedAuthority[]{SecurityRealm.AUTHENTICATED_AUTHORITY};
+
+                    Set<GrantedAuthority> authorities = new HashSet<>();
+                    authorities.add(SecurityRealm.AUTHENTICATED_AUTHORITY);
+                    authorities.addAll(getGroupsForUser(info.getEmail()));
+
                     // logs this user in.
                     UsernamePasswordAuthenticationToken token =
-                            new UsernamePasswordAuthenticationToken(info.getEmail(), "", authorities);
+                            new UsernamePasswordAuthenticationToken(info.getEmail(), "", authorities.toArray(new GrantedAuthority[]{}));
 
                     // prevent session fixation attack
                     Stapler.getCurrentRequest().getSession().invalidate();
@@ -287,6 +324,64 @@ public class GoogleOAuth2SecurityRealm extends SecurityRealm {
         }
     }
 
+    private GoogleCredential getGoogleCredentials() throws IOException {
+        if (this.gsuiteServiceAccountCredentialsId == null) {
+            return null;
+        }
+
+        List<FileCredentials> serviceAccount = CredentialsMatchers.filter(
+                CredentialsProvider.lookupCredentials(FileCredentials.class, Jenkins.getInstance(), ACL.SYSTEM, Collections.<DomainRequirement>emptyList()),
+                CredentialsMatchers.withId(this.gsuiteServiceAccountCredentialsId)
+        );
+
+        if (serviceAccount.size() > 0) {
+            GoogleCredential googleCredential = GoogleCredential.fromStream(serviceAccount.get(0).getContent());
+            return new GoogleCredential.Builder()
+                    .setTransport(HTTP_TRANSPORT)
+                    .setJsonFactory(JSON_FACTORY)
+                    .setServiceAccountUser(this.gsuiteImpersonationAccount)
+                    .setServiceAccountId(googleCredential.getServiceAccountId())
+                    .setServiceAccountScopes(Sets.newHashSet(DirectoryScopes.ADMIN_DIRECTORY_GROUP_READONLY))
+                    .setServiceAccountPrivateKey(googleCredential.getServiceAccountPrivateKey())
+                    .setServiceAccountPrivateKeyId(googleCredential.getServiceAccountPrivateKeyId())
+                    .setTokenServerEncodedUrl(googleCredential.getTokenServerEncodedUrl())
+                    .build();
+        } else {
+            return null;
+        }
+    }
+
+    private Set<? extends GrantedAuthority> getGroupsForUser(String email) {
+        if (this.gsuiteServiceAccountCredentialsId == null) {
+            return Sets.newHashSet();
+        }
+
+        try {
+            Directory googleAdminDirectoryService = new Directory.Builder(HTTP_TRANSPORT, JSON_FACTORY, getGoogleCredentials())
+                    .setApplicationName(Jenkins.getInstance().getDisplayName()).build();
+            Set<GrantedAuthorityImpl> groups = new HashSet<>();
+            String pageToken = null;
+
+            do {
+                Groups groupsResult = googleAdminDirectoryService.groups().list()
+                        .setUserKey(email)
+                        .setMaxResults(200)
+                        .execute();
+                if (groupsResult == null || groupsResult.getGroups() == null) {
+                    break;
+                }
+                for (Group group : groupsResult.getGroups()) {
+                    groups.add(new GrantedAuthorityImpl(group.getEmail()));
+                }
+                pageToken = groupsResult.getNextPageToken();
+            } while (pageToken != null);
+
+            return groups;
+        } catch (IOException e) {
+            return Sets.newHashSet();
+        }
+    }
+
 
     /**
      * This is where the user comes back to at the end of the OpenID redirect ping-pong.
@@ -325,6 +420,21 @@ public class GoogleOAuth2SecurityRealm extends SecurityRealm {
             }
         }
             */
+
+        @RequirePOST
+        public ListBoxModel doFillGsuiteServiceAccountCredentialsIdItems(@QueryParameter String serverUrl) {
+            Jenkins.getInstance().checkPermission(Jenkins.ADMINISTER);
+            return new StandardListBoxModel().withEmptySelection() //
+                    .withMatching( //
+                            CredentialsMatchers.instanceOf(FileCredentials.class),
+                            CredentialsProvider.lookupCredentials(StandardCredentials.class, //
+                                    Jenkins.getInstance(), //
+                                    ACL.SYSTEM, //
+                                    serverUrl != null ? URIRequirementBuilder.fromUri(serverUrl).build()
+                                            : Collections.EMPTY_LIST //
+                            ));
+
+        }
 
     }
 }
