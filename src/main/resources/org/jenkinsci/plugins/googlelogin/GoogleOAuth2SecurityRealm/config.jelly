@@ -1,5 +1,5 @@
 <?jelly escape-by-default='true'?>
-<j:jelly xmlns:j="jelly:core" xmlns:st="jelly:stapler" xmlns:d="jelly:define" xmlns:l="/lib/layout" xmlns:t="/lib/hudson" xmlns:f="/lib/form" xmlns:i="jelly:fmt" xmlns:p="/lib/hudson/project">
+<j:jelly xmlns:j="jelly:core" xmlns:st="jelly:stapler" xmlns:d="jelly:define" xmlns:l="/lib/layout" xmlns:t="/lib/hudson" xmlns:f="/lib/form" xmlns:c="/lib/credentials" xmlns:i="jelly:fmt" xmlns:p="/lib/hudson/project">
   <f:entry title="${%Client Id}" field="clientId">
     <f:textbox autocomplete="off"/>
   </f:entry>
@@ -11,5 +11,11 @@
   </f:entry>
   <f:entry title="${%Use Root URL from request}" field="rootURLFromRequest">
     <f:checkbox/>
+  </f:entry>
+  <f:entry title="${%GSuite Admin SDK Credentials}" field="gsuiteServiceAccountCredentialsId">
+    <c:select />
+  </f:entry>
+  <f:entry title="${%GSuite Impersonation Account}" field="gsuiteImpersonationAccount">
+    <f:textbox autocomplete="off"/>
   </f:entry>
 </j:jelly>

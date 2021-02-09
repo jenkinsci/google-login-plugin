@@ -14,5 +14,13 @@
          <li>The authorized redirect URLs should contain <b>${app.rootUrl}securityRealm/finishLogin</b></li>
          <li>Enter the created Client ID and secret into the fields below.</li>
      </ol>
+
+     G Suite Google Group support
+     <ol>
+         <li>Create a service account in the <a href="https://console.cloud.google.com/iam-admin/serviceaccounts">Google Developers Console</a></li>
+         <li>Edit the service account. Enable G Suite Domain-wide Delegation and create a JSON key</li>
+         <li>Find the <a href="https://console.cloud.google.com/apis/credentials">automatically generated Client ID</a> for the dwd enabled service account.</li>
+         <li>In the <a href="https://admin.google.com/AdminHome?chromeless=1#OGX:ManageOauthClients">G Suite administration UI</a> add the Client ID and scope <em>https://www.googleapis.com/auth/admin.directory.group.readonly</em></li>
+     </ol>
  </div>
 </j:jelly>

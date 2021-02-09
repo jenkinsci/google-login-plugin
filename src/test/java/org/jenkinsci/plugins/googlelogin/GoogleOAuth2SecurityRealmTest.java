@@ -53,6 +53,6 @@ public class GoogleOAuth2SecurityRealmTest {
     private GoogleOAuth2SecurityRealm setupInstanceWithDomains(String domains) throws IOException {
         String clientId = "clientId";
         String clientSecret = "clientSecret";
-        return new GoogleOAuth2SecurityRealm(clientId, clientSecret, domains);
+        return new GoogleOAuth2SecurityRealm(clientId, clientSecret, domains, null, null);
     }
 }
