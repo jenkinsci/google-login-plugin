@@ -187,9 +187,9 @@ public class GoogleOAuth2SecurityRealm extends SecurityRealm {
     @Restricted(DoNotUse.class) // stapler only
     public HttpResponse doCommenceLogin(StaplerRequest request, @QueryParameter String from,  @Header("Referer") final String referer) throws IOException {
         final String redirectOnFinish;
-        if (from != null && ! Util.isSafeToRedirectTo(from)) {
+        if (from != null && Util.isSafeToRedirectTo(from)) {
             redirectOnFinish = from;
-        } else if (referer != null && ! Util.isSafeToRedirectTo(referer)) {
+        } else if (referer != null && Util.isSafeToRedirectTo(referer)) {
             redirectOnFinish = referer;
         } else {
             redirectOnFinish = getRootURL();
