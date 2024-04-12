@@ -13,7 +13,7 @@
   <packaging>hpi</packaging>
 
   <name>Google Login Plugin</name>
-  <url>https://wiki.jenkins.io/display/JENKINS/Google+Login+Plugin</url>
+  <url>https://github.com/jenkinsci/google-login-plugin</url>
 
   <licenses>
     <license>
